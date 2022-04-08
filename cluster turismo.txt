@@ -1,0 +1,221 @@
+// David Suarez Acosta - 2020038304
+
+// Red
+docker network create --driver bridge --subnet 10.0.0.0/27 turistnet
+
+// Volumenes
+docker volume create vol_cfgvolcan
+docker volume create vol_cfgplaya
+docker volume create vol_arenal
+docker volume create vol_tamarindo
+docker volume create vol_leon
+docker volume create vol_elefante
+docker volume create vol_lasvegas
+docker volume create vol_disney
+
+// Crear Configs
+docker run -d --net turistnet -v vol_cfgvolcan:/data/configdb --ip 10.0.0.3 --name cfgvolcan mongo mongod --port 27017 --configsvr --replSet "repconfig" --dbpath /data/configdb
+docker run -d --net turistnet -v vol_cfgplaya:/data/configdb --ip 10.0.0.4 --name cfgplaya mongo mongod --port 27017 --configsvr --replSet "repconfig" --dbpath /data/configdb
+
+// Ingresar a Configs
+docker exec -it cfgvolcan bash
+docker exec -it cfgplaya bash
+
+// Replica de Configs
+rs.initiate(
+  {
+    _id: "repconfig",
+    configsvr: true,
+    members: [
+      { _id : 0, host : "10.0.0.3:27017" },
+      { _id : 1, host : "10.0.0.4:27017" }
+    ]
+  }
+);
+
+// Crear Shards
+docker run -d --net turistnet --ip 10.0.0.5 -v vol_arenal:/data/db --name arenal mongo mongod --port 27017 --shardsvr --replSet "repcostarica" --dbpath /data/db
+docker run -d --net turistnet --ip 10.0.0.6 -v vol_tamarindo:/data/db --name tamarindo mongo mongod --port 27017 --shardsvr --replSet "repcostarica" --dbpath /data/db
+docker run -d --net turistnet --ip 10.0.0.7 -v vol_leon:/data/db --name leon mongo mongod --port 27017 --shardsvr --replSet "repkenia" --dbpath /data/db
+docker run -d --net turistnet --ip 10.0.0.8 -v vol_elefante:/data/db --name elefante mongo mongod --port 27017 --shardsvr --replSet "repkenia" --dbpath /data/db
+docker run -d --net turistnet --ip 10.0.0.9 -v vol_lasvegas:/data/db --name lasvegas mongo mongod --port 27017 --shardsvr --replSet "repusa" --dbpath /data/db
+docker run -d --net turistnet --ip 10.0.0.10 -v vol_disney:/data/db --name disney mongo mongod --port 27017 --shardsvr --replSet "repusa" --dbpath /data/db
+
+// Ingresar a Shards
+docker exec -it arenal bash
+docker exec -it tamarindo bash
+docker exec -it leon bash
+docker exec -it elefante bash
+docker exec -it lasvegas bash
+docker exec -it disney bash
+
+// Replicas de Shards
+rs.initiate(
+  {
+    _id : "repcostarica",
+    members: [
+      { _id : 0, host : "10.0.0.5:27017" },
+      { _id : 1, host : "10.0.0.6:27017" }
+    ]
+  }
+);
+
+rs.initiate(
+  {
+    _id : "repkenia",
+    members: [
+      { _id : 0, host : "10.0.0.7:27017" },
+      { _id : 1, host : "10.0.0.8:27017" }
+    ]
+  }
+);
+
+rs.initiate(
+  {
+    _id : "repusa",
+    members: [
+      { _id : 0, host : "10.0.0.9:27017" },
+      { _id : 1, host : "10.0.0.10:27017" }
+    ]
+  }
+);
+
+// Crear Arbitros
+docker run -d --net turistnet --ip 10.0.0.11 --name ramonluis mongo mongod --port 27017 --replSet repcostarica
+docker run -d --net turistnet --ip 10.0.0.12 --name poveda mongo mongod --port 27017 --replSet repkenia
+docker run -d --net turistnet --ip 10.0.0.13 --name juanito mongo mongod --port 27017 --replSet repusa
+
+// Agregar Arbitros
+rs.addArb("10.0.0.11:27017");
+rs.addArb("10.0.0.12:27017");
+rs.addArb("10.0.0.13:27017");
+
+// Crear Router
+docker run -d --net turistnet --ip 10.0.0.2 --name touristrouter1 mongo mongos --port 27017 --configdb repconfig/10.0.0.3:27017,10.0.0.4:27017
+
+// Ingresar a Router
+docker exec -it touristrouter1 mongo
+
+// Añadir Shards a Router
+sh.addShard( "repcostarica/10.0.0.5:27017"); 
+sh.addShard( "repkenia/10.0.0.7:27017"); 
+sh.addShard( "repusa/10.0.0.9:27017"); 
+
+// Agregar etiquetas a Shards
+sh.addShardTag("repcostarica", "Costa Rica");
+sh.addShardTag("repkenia", "Kenia");
+sh.addShardTag("repusa", "USA");
+
+// Agregar rango de etiquetas a Shards
+sh.addTagRange( "turismo.atracciones",
+                { pais: "Costa Rica"},
+                { pais: "Costa Rica0"},
+                "Costa Rica"
+              );
+
+sh.addTagRange( "turismo.atracciones",
+                { pais: "Kenia"},
+                { pais: "Kenia0"},
+                "Kenia"
+              );
+
+sh.addTagRange( "turismo.atracciones",
+                { pais: "USA"},
+                { pais: "USA0"},
+                "USA"
+              );
+
+// Habilitar Sharding
+sh.enableSharding("turismo");
+sh.shardCollection("turismo.atracciones", { pais : 1 } )
+
+
+// Start and Stop Containers
+docker start cfgplaya
+docker start cfgvolcan
+docker start cfgvalle
+
+docker start disney
+docker start lasvegas
+docker start elefante
+docker start leon
+docker start tamarindo
+docker start arenal
+
+docker start ramonluis
+docker start poveda
+docker start juanito
+
+docker start touristrouter1
+docker start touristrouter2
+
+
+docker stop cfgplaya
+docker stop cfgvolcan
+docker stop cfgvalle
+
+docker stop disney
+docker stop lasvegas
+docker stop elefante
+docker stop leon
+docker stop tamarindo
+docker stop arenal
+
+docker stop ramonluis
+docker stop poveda
+docker stop juanito
+
+docker stop touristrouter1
+docker stop touristrouter2
+
+
+
+// ===== QUIZ #8 =====
+
+
+// 1. Cree un collection sin sharding para guardar paquetes turísticos de cada país, inserte 
+// 2 a 3 documentos por país para llenar el collection, un paquete tiene N atracciones 
+// turísticas de las existentes, un nombre y tiene un tiempo de duración que va desde horas 
+// hasta días, al igual que un precio en la moneda del país donde se hace el paquete. 
+
+use turismo
+db.createCollection("paquetes")
+
+db.paquetes.save({pais : "Costa Rica", atracciones : [], nombre : "Noche de KY", Duracion : "5 horas", precio : "10000 colones"})
+db.paquetes.save({pais : "Costa Rica", atracciones : [], nombre : "Esperar el tren", Duracion : "7 dias", precio : "500 colones"})
+
+db.paquetes.save({pais : "Kenia", atracciones : [], nombre : "Safari 360", Duracion : "3 dias", precio : "10000 chelin keniano"})
+db.paquetes.save({pais : "Kenia", atracciones : [], nombre : "Parrillita", Duracion : "2 horas", precio : "1000 chelin keniano"})
+
+db.paquetes.save({pais : "USA", atracciones : [], nombre : "Party in the USA", Duracion : "2 dias", precio : "100 dolares"})
+db.paquetes.save({pais : "USA", atracciones : [], nombre : "Enlistarse en el USArmy", Duracion : "300 dias", precio : "0 dolares"})
+
+db.paquetes.find()
+
+
+// 2. Agregue otro nodo de configuración a la réplica de configuración
+
+docker volume create vol_cfgvalle
+
+docker run -d --net turistnet -v vol_cfgvalle:/data/configdb --ip 10.0.0.14 --name cfgvalle mongo mongod --port 27017 --configsvr --replSet "repconfig" --dbpath /data/configdb
+
+rs.add({ _id : 2, host : "10.0.0.14:27017" })
+
+
+// 3. Agregue otro router al cluster
+
+docker run -d --net turistnet --ip 10.0.0.15 --name touristrouter2 mongo mongos --port 27017 --configdb repconfig/10.0.0.3:27017,10.0.0.4:27017,10.0.0.14:27017
+
+
+// 4. Haga sharding de una tabla de operadores turísticos pero la distribución entre los 
+// shards sea por hash key y no por tags. Debe tener el nombre del operador, el país y la 
+// información de contacto, junto con una descripción del operador y su especialidad. 
+
+sh.shardCollection("turismo.operadores", {pais : "hashed"})
+
+db.operadores.save({nombre : "Rogelio", pais : "Costa Rica", info : "Cel 1234-4321", descripcion : "Pura vida", especialidad : "Operar"})
+db.operadores.save({nombre : "Ignacio", pais : "Nicaragua", info : "Cel 1234-5678", descripcion : "K7", especialidad : "Operar"})
+db.operadores.save({nombre : "Juan", pais : "Panama", info : "Cel 1234-0000", descripcion : "Le falta KY", especialidad : "Operar"})
+db.operadores.save({nombre : "Arturo", pais : "Colombia", info : "Cel 1111-4321", descripcion : "Pesimo", especialidad : "Operar"})
+db.operadores.save({nombre : "Daniel", pais : "Venezuela", info : "Cel 1234-1234", descripcion : "Bueno", especialidad : "Operar"})
+db.operadores.save({nombre : "Roberto", pais : "Ecuador", info : "Cel 1111-0000", descripcion : "Regular", especialidad : "Operar"})
